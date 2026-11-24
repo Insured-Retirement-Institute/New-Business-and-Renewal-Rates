@@ -62,10 +62,6 @@ paths:
     get:
       description: Returns a paginated list of all products in the dictionary that the caller is authorised to see.
       operationId: ListProducts
-      security:
-      - oauth2ClientCredentials:
-        - rates.read
-      - apiKey: []
       parameters:
       - name: idSource
         in: query
@@ -138,10 +134,6 @@ paths:
     get:
       description: Returns a single product by its internal id.
       operationId: GetProduct
-      security:
-      - oauth2ClientCredentials:
-        - rates.read
-      - apiKey: []
       parameters:
       - name: id
         in: path
@@ -218,10 +210,6 @@ paths:
 
         value per parameter.'
       operationId: GetProductRate
-      security:
-      - oauth2ClientCredentials:
-        - rates.read
-      - apiKey: []
       parameters:
       - name: id
         in: path
@@ -232,7 +220,7 @@ paths:
         required: true
       - name: scope
         in: query
-        description: Rate scope to retrieve (e.g. newBusiness, gmir). Single value only.
+        description: Rate scope to retrieve (e.g. NEW_BUSINESS, GMIR). Single value only.
         schema:
           $ref: '#/components/schemas/RateScope'
       - name: effectiveDate
@@ -333,10 +321,8 @@ webhooks:
         carrier must not retry it. 400, 401 and 403 are final and must not be retried. Any other
         non-2xx response, or a timeout, is retried with exponential backoff (at least 5 attempts
         over at least 24 hours). If delivery still fails, Requestors recover through
-        `GetProductRate` with `modifiedFrom`. See docs/push-and-pull-mechanisms.md.
-
+        `GetProductRate` with `modifiedFrom`. See docs/push-and-pull-mechanisms.md.'
       operationId: ReceiveProductRates
-      security: []
       parameters:
       - name: Idempotency-Key
         in: header
@@ -423,22 +409,6 @@ webhooks:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 components:
-  securitySchemes:
-    oauth2ClientCredentials:
-      type: oauth2
-      description: 'OAuth 2.0 client credentials issued by the carrier to each Requestor for pull
-        requests. The token URL is carrier-specific; the URL below is a placeholder. Push
-        deliveries are authenticated by the HMAC signature headers on the webhook instead.'
-      flows:
-        clientCredentials:
-          tokenUrl: https://auth.carrier.example.com/oauth2/token
-          scopes:
-            rates.read: Read product dictionary and rate data.
-    apiKey:
-      type: apiKey
-      description: API key issued by the carrier to each Requestor for pull requests, as an alternative to OAuth 2.0.
-      in: header
-      name: X-API-Key
   schemas:
     ComponentType:
       type: string
@@ -447,42 +417,42 @@ components:
         A value of 9999 means uncapped/infinite.
 
         **Strategy Components** — define the performance ceiling or participation:
-        - `cap` — cap rate; maximum return limit
-        - `participation` — participation rate; percentage of index gain credited
-        - `spread` — spread rate; deduction from index return
-        - `fixed` — fixed rate; guaranteed credit independent of index performance
-        - `performanceTrigger` — trigger level for threshold-based crediting
-        - `tier` — tier threshold; used in approved tiered representations
+        - `CAP` — cap rate; maximum return limit
+        - `PARTICIPATION` — participation rate; percentage of index gain credited
+        - `SPREAD` — spread rate; deduction from index return
+        - `FIXED` — fixed rate; guaranteed credit independent of index performance
+        - `PERFORMANCE_TRIGGER` — trigger level for threshold-based crediting
+        - `TIER` — tier threshold; used in approved tiered representations
 
         **Downside Protection Components** — define loss protection:
-        - `buffer` — percentage of loss absorbed before client exposure begins
-        - `floor` — maximum permitted loss over the term (positive decimal, e.g. 0.20 = -20% floor)
-        - `barrier` — downside threshold beyond which losses are incurred
-        - `downsideParticipation` — percentage of index loss applied to the client
+        - `BUFFER` — percentage of loss absorbed before client exposure begins
+        - `FLOOR` — maximum permitted loss over the term (positive decimal, e.g. 0.20 = -20% floor)
+        - `BARRIER` — downside threshold beyond which losses are incurred
+        - `DOWNSIDE_PARTICIPATION` — percentage of index loss applied to the client
 
         **Miscellaneous Components**:
-        - `annualFee` — annual strategy fee (e.g. 0.01 = 1.00% annual fee)
+        - `ANNUAL_FEE` — annual strategy fee (e.g. 0.01 = 1.00% annual fee)
 
         **Conventions**:
         - The absence of any downside component implies full downside protection.
-        - For a fully unprotected strategy use `downsideParticipation` with value = 1.
+        - For a fully unprotected strategy use `DOWNSIDE_PARTICIPATION` with value = 1.
         - Approved component combinations per strategy type are defined in the Strategy
           Representation Standard.
       externalDocs:
         description: Strategy Representation Standard — component types and approved catalog
         url: ./docs/strategy-representation-standard.md
       enum:
-      - cap
-      - participation
-      - spread
-      - fixed
-      - performanceTrigger
-      - tier
-      - buffer
-      - floor
-      - barrier
-      - downsideParticipation
-      - annualFee
+      - CAP
+      - PARTICIPATION
+      - SPREAD
+      - FIXED
+      - PERFORMANCE_TRIGGER
+      - TIER
+      - BUFFER
+      - FLOOR
+      - BARRIER
+      - DOWNSIDE_PARTICIPATION
+      - ANNUAL_FEE
     ErrorResponse:
       type: object
       description: Standard error response body per IRI Digital-First-Specifications.
@@ -494,7 +464,7 @@ components:
           type: string
           description: 'Machine-readable structured identifier in domain.category.subcategory format
 
-            (e.g. "rates.validation.missingField").'
+            (e.g. "rates.validation.missing-field").'
         timestamp:
           type: string
           format: date-time
@@ -508,6 +478,21 @@ components:
         userMessage:
           type: string
           description: End-user-friendly explanation, safe to display in portals.
+        isRetryable:
+          type: boolean
+          description: 'Whether sending the identical request again may succeed.
+
+            If absent, follow HTTP conventions: retry 429 and 503 after `Retry-After`, and do not
+            retry other 4xx.'
+        validationErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          minItems: 1
+          description: 'Individual problems behind the error. The top-level `code` describes the
+            failure as a whole.
+
+            Omit when there is only the top-level error.'
       required:
       - code
       - correlationId
@@ -567,8 +552,8 @@ components:
       type: string
       description: Source system that minted a product identifier.
       enum:
-      - cusip
-      - internal
+      - CUSIP
+      - INTERNAL
     ListProductsResponseContent:
       type: object
       properties:
@@ -709,7 +694,7 @@ components:
       if:
         properties:
           referenceSource:
-            const: acord
+            const: ACORD
         required:
         - referenceSource
       then:
@@ -779,7 +764,7 @@ components:
           description: >-
             Premium band definitions that this rate's `bandId` values resolve
             against. Normally sourced from the Product Dictionary and omitted here.
-            REQUIRED when `referenceSource` is `acord`, because the ACORD spec does
+            REQUIRED when `referenceSource` is `ACORD`, because the ACORD spec does
             not capture premium bands, so the payload must carry them to be
             self-contained.
         rates:
@@ -842,13 +827,13 @@ components:
       type: string
       description: |
         What the receiver did with a pushed rate entry.
-        - `applied` — the entry was stored.
-        - `unchanged` — the entry matches what is already stored; nothing changed.
-        - `stale` — the entry's `modified` is older than the stored one, so it was ignored.
+        - `APPLIED` — the entry was stored.
+        - `UNCHANGED` — the entry matches what is already stored; nothing changed.
+        - `STALE` — the entry's `modified` is older than the stored one, so it was ignored.
       enum:
-      - applied
-      - unchanged
-      - stale
+      - APPLIED
+      - UNCHANGED
+      - STALE
     RateGroup:
       type: object
       description: 'A grouping of strategies keyed by a specific surrender period and premium band.
@@ -897,15 +882,15 @@ components:
       type: string
       description: Where the product definition referenced by a rate entry should be looked up.
       enum:
-      - productDictionary
-      - acord
+      - PRODUCT_DICTIONARY
+      - ACORD
     RateScope:
       type: string
       description: Scope of the rate being communicated.
       enum:
-      - newBusiness
-      - gmir
-      - bailout
+      - NEW_BUSINESS
+      - GMIR
+      - BAILOUT
     RateStrategy:
       type: object
       description: |
@@ -974,6 +959,33 @@ components:
       - displayName
       - effectiveDate
       - id
+    ValidationError:
+      type: object
+      description: One problem behind a failed request, reported in `ErrorResponse.validationErrors`.
+      properties:
+        code:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$
+          description: 'Machine-readable identifier in domain.category.subcategory format
+            (e.g. "rates.validation.missing-field").'
+        message:
+          type: string
+          minLength: 1
+          description: Developer-focused explanation of this problem.
+        userMessage:
+          type: string
+          minLength: 1
+          description: End-user-friendly text for this problem, suitable for showing next to the related input.
+        path:
+          type: string
+          description: 'JSON Pointer (RFC 6901) to the request-body field this problem relates to
+            (e.g. "/rates/0/effectiveDate").
+
+            Omit when the problem is not tied to one field.'
+      required:
+      - code
+      - message
     SurrenderPeriod:
       type: object
       description: A named surrender-charge period associated with a product.
