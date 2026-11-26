@@ -19,6 +19,19 @@ info:
     - **Rate API** — transmits the economic parameters (rate values) associated with those
       previously identified strategies. It does not re-transmit structural or definitional data.
 
+    ### Push and Pull
+
+    This document describes the API a carrier (Data Provider) implements:
+
+    - **Pull** — the `paths` the carrier hosts. Solution providers (Requestors) call
+      `GET /v1/product-rates/{id}` with `modifiedFrom` / `modifiedTo` to retrieve changes.
+    - **Push** — the `webhooks` the carrier sends. When a rate is published or corrected, the
+      carrier POSTs the same `ProductRate` entries to the URL each Requestor registered out of band.
+
+    Carriers that push must also support pull, so Requestors can reconcile any missed delivery.
+    See [Push and Pull Mechanisms](../docs/push-and-pull-mechanisms.md) and
+    [Security Considerations](../docs/security-considerations-for-api-interactions.md).
+
     ### Strategy Representation Standard
 
     Rate payloads represent strategies as a collection of typed `components`, each carrying a
@@ -47,7 +60,7 @@ externalDocs:
 paths:
   /v1/product-dictionary:
     get:
-      description: Returns a paginated list of all products in the dictionary.
+      description: Returns a paginated list of all products in the dictionary that the caller is authorised to see.
       operationId: ListProducts
       parameters:
       - name: idSource
@@ -83,12 +96,20 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListProductsResponseContent'
         '400':
           description: ClientError 400 response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: UnauthorizedError 401 response
           content:
             application/json:
               schema:
@@ -136,12 +157,20 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetProductResponseContent'
         '400':
           description: ClientError 400 response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: UnauthorizedError 401 response
           content:
             application/json:
               schema:
@@ -195,7 +224,7 @@ paths:
         required: true
       - name: scope
         in: query
-        description: Rate scope to retrieve (e.g. newBusiness, gmir). Single value only.
+        description: Rate scope to retrieve (e.g. NEW_BUSINESS, GMIR). Single value only.
         schema:
           $ref: '#/components/schemas/RateScope'
       - name: effectiveDate
@@ -245,12 +274,20 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetProductRateResponseContent'
         '400':
           description: ClientError 400 response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: UnauthorizedError 401 response
           content:
             application/json:
               schema:
@@ -273,7 +310,116 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+webhooks:
+  productRatesPublished:
+    post:
+      description: 'Sent by the carrier (Data Provider) to a solution provider (Requestor) when rates
+        are published or corrected. Hosted by the Requestor at the URL it registered with the
+        carrier out of band; carriers must not accept a callback URL supplied per request.
+
+
+        Each entry is identical to a `GetProductRate` entry. Receivers upsert each entry and
+        ignore any entry whose `modified` is at or before the stored `modified`, so retried and
+        out-of-order deliveries are safe.
+
+
+        Receivers respond 2xx only after the batch is durably stored. A 2xx ends delivery; the
+        carrier must not retry it. 400, 401 and 403 are final and must not be retried. Any other
+        non-2xx response, or a timeout, is retried with exponential backoff (at least 5 attempts
+        over at least 24 hours). If delivery still fails, Requestors recover through
+        `GetProductRate` with `modifiedFrom`. See docs/push-and-pull-mechanisms.md.'
+      operationId: ReceiveProductRates
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        description: Unique per delivery and unchanged across retries of that delivery, so receivers can discard duplicates.
+        schema:
+          type: string
+          description: Unique per delivery and unchanged across retries of that delivery, so receivers can discard duplicates.
+        required: true
+      - name: X-Signature-SHA256
+        in: header
+        description: 'Hex-encoded HMAC-SHA256 of `{X-Signature-Timestamp}.{raw request body}`, keyed with
+          the shared secret exchanged at registration. Receivers must verify it before processing
+          the payload, and reject it with 401 if it does not match.'
+        schema:
+          type: string
+          description: Hex-encoded HMAC-SHA256 signature of the timestamp and raw request body.
+        required: true
+      - name: X-Signature-Timestamp
+        in: header
+        description: 'Unix time in seconds when the delivery was signed. Receivers reject deliveries
+          more than 5 minutes old with 401, to prevent replay.'
+        schema:
+          type: integer
+          description: Unix time in seconds when the delivery was signed.
+        required: true
+      - name: correlationId
+        in: header
+        description: Optional correlation identifier for cross-system tracing.
+        schema:
+          type: string
+          description: Optional correlation identifier for cross-system tracing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiveProductRatesRequestContent'
+      responses:
+        '200':
+          description: ReceiveProductRates 200 response. Delivery acknowledged; the carrier must not retry.
+          headers:
+            correlationId:
+              description: Echoed correlation identifier from the request.
+              schema:
+                type: string
+                description: Echoed correlation identifier from the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiveProductRatesResponseContent'
+        '400':
+          description: ClientError 400 response. The payload is malformed or fails validation. Do not retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: UnauthorizedError 401 response. Signature missing, invalid or expired. Do not retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: ForbiddenError 403 response. The carrier is not authorized to update a product or variation in the batch. Do not retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: ThrottlingError 429 response. Retry after the `Retry-After` interval.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ServerError 500 response. Retry with exponential backoff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
+  headers:
+    Api-Version:
+      description: Minor/patch version of the API that served this response.
+      schema:
+        type: string
   schemas:
     ComponentType:
       type: string
@@ -282,42 +428,42 @@ components:
         A value of 9999 means uncapped/infinite.
 
         **Strategy Components** — define the performance ceiling or participation:
-        - `cap` — cap rate; maximum return limit
-        - `participation` — participation rate; percentage of index gain credited
-        - `spread` — spread rate; deduction from index return
-        - `fixed` — fixed rate; guaranteed credit independent of index performance
-        - `performanceTrigger` — trigger level for threshold-based crediting
-        - `tier` — tier threshold; used in approved tiered representations
+        - `CAP` — cap rate; maximum return limit
+        - `PARTICIPATION` — participation rate; percentage of index gain credited
+        - `SPREAD` — spread rate; deduction from index return
+        - `FIXED` — fixed rate; guaranteed credit independent of index performance
+        - `PERFORMANCE_TRIGGER` — trigger level for threshold-based crediting
+        - `TIER` — tier threshold; used in approved tiered representations
 
         **Downside Protection Components** — define loss protection:
-        - `buffer` — percentage of loss absorbed before client exposure begins
-        - `floor` — maximum permitted loss over the term (positive decimal, e.g. 0.20 = -20% floor)
-        - `barrier` — downside threshold beyond which losses are incurred
-        - `downsideParticipation` — percentage of index loss applied to the client
+        - `BUFFER` — percentage of loss absorbed before client exposure begins
+        - `FLOOR` — maximum permitted loss over the term (positive decimal, e.g. 0.20 = -20% floor)
+        - `BARRIER` — downside threshold beyond which losses are incurred
+        - `DOWNSIDE_PARTICIPATION` — percentage of index loss applied to the client
 
         **Miscellaneous Components**:
-        - `annualFee` — annual strategy fee (e.g. 0.01 = 1.00% annual fee)
+        - `ANNUAL_FEE` — annual strategy fee (e.g. 0.01 = 1.00% annual fee)
 
         **Conventions**:
         - The absence of any downside component implies full downside protection.
-        - For a fully unprotected strategy use `downsideParticipation` with value = 1.
+        - For a fully unprotected strategy use `DOWNSIDE_PARTICIPATION` with value = 1.
         - Approved component combinations per strategy type are defined in the Strategy
           Representation Standard.
       externalDocs:
         description: Strategy Representation Standard — component types and approved catalog
         url: ./docs/strategy-representation-standard.md
       enum:
-      - cap
-      - participation
-      - spread
-      - fixed
-      - performanceTrigger
-      - tier
-      - buffer
-      - floor
-      - barrier
-      - downsideParticipation
-      - annualFee
+      - CAP
+      - PARTICIPATION
+      - SPREAD
+      - FIXED
+      - PERFORMANCE_TRIGGER
+      - TIER
+      - BUFFER
+      - FLOOR
+      - BARRIER
+      - DOWNSIDE_PARTICIPATION
+      - ANNUAL_FEE
     ErrorResponse:
       type: object
       description: Standard error response body per IRI Digital-First-Specifications.
@@ -329,7 +475,7 @@ components:
           type: string
           description: 'Machine-readable structured identifier in domain.category.subcategory format
 
-            (e.g. "rates.validation.missingField").'
+            (e.g. "rates.validation.missing-field").'
         timestamp:
           type: string
           format: date-time
@@ -343,6 +489,21 @@ components:
         userMessage:
           type: string
           description: End-user-friendly explanation, safe to display in portals.
+        isRetryable:
+          type: boolean
+          description: 'Whether sending the identical request again may succeed.
+
+            If absent, follow HTTP conventions: retry 429 and 503 after `Retry-After`, and do not
+            retry other 4xx.'
+        validationErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          minItems: 1
+          description: 'Individual problems behind the error. The top-level `code` describes the
+            failure as a whole.
+
+            Omit when there is only the top-level error.'
       required:
       - code
       - correlationId
@@ -402,8 +563,8 @@ components:
       type: string
       description: Source system that minted a product identifier.
       enum:
-      - cusip
-      - internal
+      - CUSIP
+      - INTERNAL
     ListProductsResponseContent:
       type: object
       properties:
@@ -544,7 +705,7 @@ components:
       if:
         properties:
           referenceSource:
-            const: acord
+            const: ACORD
         required:
         - referenceSource
       then:
@@ -614,7 +775,7 @@ components:
           description: >-
             Premium band definitions that this rate's `bandId` values resolve
             against. Normally sourced from the Product Dictionary and omitted here.
-            REQUIRED when `referenceSource` is `acord`, because the ACORD spec does
+            REQUIRED when `referenceSource` is `ACORD`, because the ACORD spec does
             not capture premium bands, so the payload must carry them to be
             self-contained.
         rates:
@@ -657,6 +818,33 @@ components:
       required:
       - type
       - value
+    RateDeliveryResult:
+      type: object
+      description: The outcome for one pushed rate entry.
+      properties:
+        id:
+          type: string
+          description: Product identifier of the pushed entry.
+        revisionId:
+          type: string
+          description: Revision identifier of the pushed entry.
+        status:
+          $ref: '#/components/schemas/RateDeliveryStatus'
+      required:
+      - id
+      - revisionId
+      - status
+    RateDeliveryStatus:
+      type: string
+      description: |
+        What the receiver did with a pushed rate entry.
+        - `APPLIED` — the entry was stored.
+        - `UNCHANGED` — the entry matches what is already stored; nothing changed.
+        - `STALE` — the entry's `modified` is older than the stored one, so it was ignored.
+      enum:
+      - APPLIED
+      - UNCHANGED
+      - STALE
     RateGroup:
       type: object
       description: 'A grouping of strategies keyed by a specific surrender period and premium band.
@@ -679,19 +867,41 @@ components:
       - bandId
       - strategies
       - surrenderPeriodId
+    ReceiveProductRatesRequestContent:
+      type: object
+      description: A batch of rate entries pushed by the carrier.
+      properties:
+        rates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductRate'
+          minItems: 1
+          maxItems: 500
+      required:
+      - rates
+    ReceiveProductRatesResponseContent:
+      type: object
+      description: The receiver's outcome for each entry in the pushed batch, in request order.
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateDeliveryResult'
+      required:
+      - results
     ReferenceSource:
       type: string
       description: Where the product definition referenced by a rate entry should be looked up.
       enum:
-      - productDictionary
-      - acord
+      - PRODUCT_DICTIONARY
+      - ACORD
     RateScope:
       type: string
       description: Scope of the rate being communicated.
       enum:
-      - newBusiness
-      - gmir
-      - bailout
+      - NEW_BUSINESS
+      - GMIR
+      - BAILOUT
     RateStrategy:
       type: object
       description: |
@@ -760,6 +970,33 @@ components:
       - displayName
       - effectiveDate
       - id
+    ValidationError:
+      type: object
+      description: One problem behind a failed request, reported in `ErrorResponse.validationErrors`.
+      properties:
+        code:
+          type: string
+          maxLength: 100
+          pattern: ^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$
+          description: 'Machine-readable identifier in domain.category.subcategory format
+            (e.g. "rates.validation.missing-field").'
+        message:
+          type: string
+          minLength: 1
+          description: Developer-focused explanation of this problem.
+        userMessage:
+          type: string
+          minLength: 1
+          description: End-user-friendly text for this problem, suitable for showing next to the related input.
+        path:
+          type: string
+          description: 'JSON Pointer (RFC 6901) to the request-body field this problem relates to
+            (e.g. "/rates/0/effectiveDate").
+
+            Omit when the problem is not tied to one field.'
+      required:
+      - code
+      - message
     SurrenderPeriod:
       type: object
       description: A named surrender-charge period associated with a product.
