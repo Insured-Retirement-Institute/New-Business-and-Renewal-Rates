@@ -96,6 +96,8 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
@@ -155,6 +157,8 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
@@ -270,6 +274,8 @@ paths:
               schema:
                 type: string
                 description: Echoed correlation identifier from the request.
+            Api-Version:
+              $ref: '#/components/headers/Api-Version'
           content:
             application/json:
               schema:
@@ -409,6 +415,11 @@ webhooks:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 components:
+  headers:
+    Api-Version:
+      description: Minor/patch version of the API that served this response.
+      schema:
+        type: string
   schemas:
     ComponentType:
       type: string
